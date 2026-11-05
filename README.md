@@ -103,3 +103,34 @@ npm run build
 npm run preview
 ```
 Open `http://localhost:5173` in any modern desktop browser (Chrome, Edge, Firefox, Brave, Safari).
+
+---
+
+## 🌐 Deploy to GitHub Pages (Automated Free Hosting)
+
+This project is pre-configured with a GitHub Actions workflow (`.github/workflows/deploy.yml`) that automatically builds and deploys the game whenever you push to GitHub!
+
+### Step 1: Create a GitHub Repository
+1. Go to [github.com/new](https://github.com/new).
+2. Name your repository (e.g. `ros-browser-game` or `island-ops`).
+3. Leave it Public (or Private) and do not check "Initialize with README".
+4. Click **Create repository**.
+
+### Step 2: Push your code
+Open PowerShell or your terminal in this directory and run:
+```bash
+git remote add origin https://github.com/<YOUR-USERNAME>/<YOUR-REPO-NAME>.git
+git branch -M main
+git push -u origin main
+```
+
+### Step 3: Enable GitHub Pages
+1. Go to your repository on GitHub.
+2. Click **Settings** ➔ **Pages** (in the left sidebar).
+3. Under **Build and deployment** ➔ **Source**, select **GitHub Actions**.
+
+🎉 That's it! GitHub Actions will automatically build Vite and deploy the game to:
+`https://<YOUR-USERNAME>.github.io/<YOUR-REPO-NAME>/`
+
+Share that link with anyone to play on **PC, Mac, iPhone, or Android**!
+

@@ -23,6 +23,11 @@ const clamp = (val, min, max) => Math.max(min, Math.min(max, val));
 export default function App() {
   const mountRef = useRef(null);
 
+  // Detect Mobile / Touch Capability
+  const [isMobile] = useState(() => {
+    return typeof window !== "undefined" && ("ontouchstart" in window || navigator.maxTouchPoints > 0);
+  });
+
   // Game UI States
   const [inMenu, setInMenu] = useState(true);
   const [paused, setPaused] = useState(false);
@@ -30,9 +35,11 @@ export default function App() {
   const [gameOver, setGameOver] = useState(false);
   const [won, setWon] = useState(false);
   const [spectating, setSpectating] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
 
-  // Settings
+  // Performance Settings (Defaults to performance on mobile for solid 60 FPS)
+  const [graphicsQuality, setGraphicsQuality] = useState(() => {
+    return isMobile ? "performance" : "balanced";
+  });
   const [sensitivity, setSensitivity] = useState(1.0);
   const [volume, setVolume] = useState(0.8);
 
@@ -53,10 +60,10 @@ export default function App() {
   const [kills, setKills] = useState(0);
   const [headshots, setHeadshots] = useState(0);
   const [damageDealt, setDamageDealt] = useState(0);
-  const [aliveCount, setAliveCount] = useState(30);
+  const [aliveCount, setAliveCount] = useState(21);
   const [survivalTime, setSurvivalTime] = useState(0);
 
-  const [dropState, setDropState] = useState("IN_PLANE"); // IN_PLANE, FREEFALL, GLIDING, GROUND
+  const [dropState, setDropState] = useState("IN_PLANE");
   const [altitude, setAltitude] = useState(220);
   const [airspeed, setAirspeed] = useState(50);
 
@@ -85,13 +92,7 @@ export default function App() {
   const [playerMapPos, setPlayerMapPos] = useState({ x: 0, z: 0 });
   const [playerMapYaw, setPlayerMapYaw] = useState(0);
 
-  // Detect Touch / Mobile device
-  useEffect(() => {
-    const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-    setIsMobile(hasTouch);
-  }, []);
-
-  // Internal Engine References (Bypass React re-render lag during 60FPS loop)
+  // Engine References
   const engineRef = useRef({
     scene: null,
     camera: null,
@@ -105,7 +106,7 @@ export default function App() {
     airdropManager: null,
     zoneSystem: null,
     windTurbines: [],
-    clouds: [],
+    clouds: null,
     keys: {},
     mouse: { x: 0, y: 0, isDown: false, isRightDown: false },
     touchMove: { x: 0, y: 0, sprint: false },
@@ -131,10 +132,10 @@ export default function App() {
     fireCooldown: 0,
     reloadProgress: 0,
     pointerLocked: false,
-    spectateBotIdx: 0
+    frameCount: 0
   });
 
-  // Handle Main Match Initiation
+  // Start / Restart Match
   const startGame = useCallback(() => {
     setInMenu(false);
     setGameOver(false);
@@ -148,7 +149,7 @@ export default function App() {
     setKills(0);
     setHeadshots(0);
     setDamageDealt(0);
-    setAliveCount(30);
+    setAliveCount(21);
     setSurvivalTime(0);
     setDropState("IN_PLANE");
     setAltitude(220);
@@ -163,10 +164,10 @@ export default function App() {
     eng.playerVel.set(0, 0, 0);
     eng.activeVehicle = null;
 
-    if (eng.renderer && !("ontouchstart" in window || navigator.maxTouchPoints > 0)) {
+    if (eng.renderer && !isMobile) {
       eng.renderer.domElement.requestPointerLock?.();
     }
-  }, []);
+  }, [isMobile]);
 
   // Eject from Plane
   const ejectFromPlane = useCallback(() => {
@@ -187,7 +188,7 @@ export default function App() {
     eng.playerVel.y = -8;
   }, [dropState]);
 
-  // Switch Active Weapon Slot
+  // Switch Active Weapon
   const switchWeapon = useCallback((weaponId) => {
     const eng = engineRef.current;
     const idx = eng.inventory.weapons.findIndex(w => w.id === weaponId);
@@ -226,35 +227,48 @@ export default function App() {
     const mount = mountRef.current;
     if (!mount) return;
 
-    // --- THREE.JS INITIALIZATION ---
+    // --- RENDERER INITIALIZATION (Optimized for 60 FPS) ---
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(65, mount.clientWidth / mount.clientHeight, 0.1, 450);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    const camera = new THREE.PerspectiveCamera(65, mount.clientWidth / mount.clientHeight, 0.1, 400);
+
+    const isPerf = graphicsQuality === "performance";
+    const pixelRatio = isPerf || isMobile ? 1.0 : Math.min(window.devicePixelRatio, 1.35);
+
+    const renderer = new THREE.WebGLRenderer({
+      antialias: !isPerf,
+      powerPreference: "high-performance",
+      precision: isPerf ? "mediump" : "highp"
+    });
+    renderer.setPixelRatio(pixelRatio);
     renderer.setSize(mount.clientWidth, mount.clientHeight);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    if (graphicsQuality === "high") {
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFShadowMap;
+    } else {
+      renderer.shadowMap.enabled = false;
+    }
     mount.appendChild(renderer.domElement);
 
     // Build Island Arena
-    const worldData = buildWorld(scene);
+    const worldData = buildWorld(scene, graphicsQuality);
 
     // Build Cargo Transport Plane
-    const planeMat = new THREE.MeshStandardMaterial({ color: 0x3d494f, roughness: 0.5, metalness: 0.5 });
+    const planeMat = new THREE.MeshLambertMaterial({ color: 0x3d494f });
     const planeMesh = new THREE.Group();
-    const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 34, 12), planeMat);
+    const fuselage = new THREE.Mesh(new THREE.CylinderGeometry(3.5, 3.5, 34, 8), planeMat);
     fuselage.rotation.z = Math.PI / 2;
     planeMesh.add(fuselage);
-    const wings = new THREE.Mesh(new THREE.BoxGeometry(42, 0.6, 8), planeMat);
+    const wings = new THREE.Mesh(new THREE.BoxGeometry(42, 0.5, 7), planeMat);
     planeMesh.add(wings);
     scene.add(planeMesh);
 
-    // Player 3D Character Mesh
+    // Player Character Mesh
     const playerMesh = createCharacterMesh({ isPlayer: true, skinIndex: 0, shirtColor: 0x1f3a4d });
     scene.add(playerMesh);
 
-    // Initialize 29 Bots
-    const bots = createBots(29, scene);
+    // Initialize 20 Optimized AI Bots
+    const bots = createBots(20, scene);
 
     // Airdrop & Zone Systems
     const airdropManager = new AirdropManager(scene);
@@ -276,8 +290,6 @@ export default function App() {
     eng.clouds = worldData.clouds;
     eng.planeMesh = planeMesh;
 
-    const hasTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
-
     // --- EVENT LISTENERS ---
     const canvas = renderer.domElement;
 
@@ -287,51 +299,34 @@ export default function App() {
         e.preventDefault();
       }
 
-      // Parachute & Eject
       if (e.code === "KeyF") {
         if (dropState === "IN_PLANE") {
           ejectFromPlane();
         } else if (eng.activeVehicle) {
-          // Exit Vehicle
           eng.activeVehicle.isOccupied = false;
           eng.playerPos.add(new THREE.Vector3(2.5, 0, 0));
           eng.activeVehicle = null;
           setDrivingVehicle(null);
           sounds.updateEngine(0, false);
         } else {
-          // Check Enter Vehicle or Loot
           checkInteract(eng);
         }
       }
 
-      if (e.code === "Space" && dropState === "FREEFALL") {
-        deployParachute();
-      }
-
-      // Weapons switch 1, 2, 3
+      if (e.code === "Space" && dropState === "FREEFALL") deployParachute();
       if (e.code === "Digit1" && eng.inventory.weapons[0]) switchWeapon(eng.inventory.weapons[0].id);
       if (e.code === "Digit2" && eng.inventory.weapons[1]) switchWeapon(eng.inventory.weapons[1].id);
       if (e.code === "Digit3" && eng.inventory.weapons[2]) switchWeapon(eng.inventory.weapons[2].id);
-
-      // Reload
       if (e.code === "KeyR") handleReload(eng);
-
-      // Medkit Quick Key
       if (e.code === "KeyH") useMed("medkit");
-
-      // Tactical Map Toggle
       if (e.code === "KeyM") setTacticalMapOpen(prev => !prev);
-
-      // Crouch Toggle
       if (e.code === "KeyC") setIsCrouching(prev => !prev);
     };
 
-    const onKeyUp = e => {
-      eng.keys[e.code] = false;
-    };
+    const onKeyUp = e => { eng.keys[e.code] = false; };
 
     const onMouseDown = e => {
-      if (hasTouch) return; // Touch controls handle mobile interactions
+      if (isMobile) return;
       if (e.button === 0) {
         if (!eng.pointerLocked) {
           canvas.requestPointerLock?.();
@@ -347,7 +342,7 @@ export default function App() {
     };
 
     const onMouseUp = e => {
-      if (hasTouch) return;
+      if (isMobile) return;
       if (e.button === 0) eng.mouse.isDown = false;
       if (e.button === 2) {
         eng.mouse.isRightDown = false;
@@ -383,9 +378,8 @@ export default function App() {
     canvas.addEventListener("contextmenu", onContextMenu);
     window.addEventListener("resize", onResize);
 
-    // --- GAME INTERACTION & SHOOTING LOGIC ---
+    // --- GAME INTERACTION & HIGH-SPEED SHOOTING ---
     function checkInteract(engine) {
-      // 1. Vehicle entry check
       const nearbyVehicle = engine.vehicles.find(
         v => Math.hypot(v.x - engine.playerPos.x, v.z - engine.playerPos.z) < 4.0
       );
@@ -397,18 +391,16 @@ export default function App() {
         return;
       }
 
-      // 2. Loot items check
       const lootIndex = engine.lootItems.findIndex(
         l => l.active && Math.hypot(l.x - engine.playerPos.x, l.z - engine.playerPos.z) < 3.0
       );
       if (lootIndex !== -1) {
         const item = engine.lootItems[lootIndex];
         item.active = false;
-        scene.remove(item.group);
+        scene.remove(item.mesh);
         sounds.playPickup();
 
         if (WEAPONS[item.type]) {
-          // Equip / Add weapon
           const newWep = WEAPONS[item.type];
           const exists = engine.inventory.weapons.find(w => w.id === newWep.id);
           if (!exists) {
@@ -431,14 +423,11 @@ export default function App() {
         } else if (item.type === "energyDrink") {
           engine.inventory.energyDrinks++;
         } else if (item.type.startsWith("ammo")) {
-          // Add ammo
           const map = { ammo556: "5.56mm", ammo45: ".45 ACP", ammo12g: "12 Gauge" };
           const t = map[item.type] || "5.56mm";
           engine.inventory.ammoPool[t] = (engine.inventory.ammoPool[t] || 0) + 60;
           const currW = engine.inventory.weapons[engine.inventory.activeIdx];
-          if (currW && currW.ammoType === t) {
-            setReserve(engine.inventory.ammoPool[t]);
-          }
+          if (currW && currW.ammoType === t) setReserve(engine.inventory.ammoPool[t]);
         }
       }
     }
@@ -449,7 +438,6 @@ export default function App() {
 
       if (engine.fireCooldown > 0 || engine.reloadProgress > 0) return;
 
-      // Check ammo (fists have unlimited)
       if (currentWep.id !== "fists") {
         const curMag = engine.inventory.magPool[currentWep.id] || 0;
         if (curMag <= 0) {
@@ -465,14 +453,17 @@ export default function App() {
       triggerMuzzleFlash(engine.player);
       sounds.playShoot(currentWep.id);
 
-      // Log gunfire ping on minimap
+      // Gunfire ping on minimap
       setGunfirePings(prev => [
-        ...prev.slice(-6),
+        ...prev.slice(-4),
         { x: engine.playerPos.x, z: engine.playerPos.z, time: Date.now() }
       ]);
 
-      // Bullet Ballistics & Raycasting
+      // FAST O(N) RAYCASTING (Tests only bot hitboxes, NO recursive mesh traversal!)
       const pellets = currentWep.pellets || 1;
+      const activeBots = engine.bots.filter(b => b.alive && b.hitBox);
+      const hitBoxes = activeBots.map(b => b.hitBox);
+
       for (let p = 0; p < pellets; p++) {
         const spreadFactor = eng.mouse.isRightDown
           ? currentWep.adsSpread
@@ -484,27 +475,18 @@ export default function App() {
         const ray = new THREE.Raycaster();
         ray.setFromCamera(new THREE.Vector2(spreadX, spreadY), camera);
 
-        // Check hits against bots
-        const activeBots = engine.bots.filter(b => b.alive);
-        const botMeshes = activeBots.map(b => b.mesh);
-        const hits = ray.intersectObjects(botMeshes, true);
+        const hits = ray.intersectObjects(hitBoxes, false); // non-recursive!
 
         if (hits.length > 0 && hits[0].distance < currentWep.range) {
           const hit = hits[0];
-          // Find root bot
-          let obj = hit.object;
-          while (obj.parent && !engine.bots.some(b => b.mesh === obj)) {
-            obj = obj.parent;
-          }
-          const targetBot = engine.bots.find(b => b.mesh === obj);
+          const targetBot = activeBots.find(b => b.hitBox === hit.object);
 
           if (targetBot && targetBot.alive) {
-            const isHead = hit.point.y > targetBot.y + 1.8;
+            const isHead = hit.point.y > targetBot.y + 1.6;
             let dmg = isHead
               ? currentWep.damage * currentWep.headshotMult
               : currentWep.damage;
 
-            // Apply victim helmet / vest reduction
             if (isHead && targetBot.helmetLevel > 0) {
               dmg *= 1 - HELMETS[targetBot.helmetLevel].reduction;
             }
@@ -512,12 +494,10 @@ export default function App() {
             dmg = Math.round(dmg);
             setDamageDealt(prev => prev + dmg);
 
-            // Audio & HUD Hitmarker
             sounds.playHit(isHead);
             setHitmarker({ isHeadshot: isHead, damage: dmg });
-            setTimeout(() => setHitmarker(null), 350);
+            setTimeout(() => setHitmarker(null), 300);
 
-            // Apply Damage
             if (targetBot.shield > 0) {
               const absorbed = Math.min(targetBot.shield, dmg);
               targetBot.shield -= absorbed;
@@ -543,7 +523,7 @@ export default function App() {
           }
         }
 
-        // Bullet visual tracer
+        // Lightweight Tracer
         const dir = new THREE.Vector3();
         camera.getWorldDirection(dir);
         dir.x += spreadX;
@@ -551,18 +531,12 @@ export default function App() {
         dir.normalize();
 
         const tracer = new THREE.Mesh(
-          new THREE.SphereGeometry(0.09, 6, 6),
+          new THREE.SphereGeometry(0.08, 4, 4),
           new THREE.MeshBasicMaterial({ color: 0xffea88 })
         );
         tracer.position.copy(camera.position).addScaledVector(dir, 1.8);
         scene.add(tracer);
-        engine.bullets.push({
-          mesh: tracer,
-          origin: tracer.position.clone(),
-          dir,
-          speed: 180,
-          life: 0.5
-        });
+        engine.bullets.push({ mesh: tracer, dir, speed: 180, life: 0.35 });
       }
     }
 
@@ -584,12 +558,11 @@ export default function App() {
     function addKillEvent(event) {
       setKillEvents(prev => [
         { ...event, id: Date.now() + Math.random() },
-        ...prev.slice(0, 5)
+        ...prev.slice(0, 4)
       ]);
       setAliveCount(eng.bots.filter(b => b.alive).length + (hp > 0 ? 1 : 0));
     }
 
-    // Expose helpers to outer scope for TouchControls
     eng.handleShoot = () => handleShoot(eng);
     eng.handleReload = () => handleReload(eng);
     eng.checkInteract = () => checkInteract(eng);
@@ -598,12 +571,14 @@ export default function App() {
     const clock = new THREE.Clock();
     let animId = null;
 
+    const dummyObj = new THREE.Object3D();
+
     const animate = () => {
       animId = requestAnimationFrame(animate);
-      const dt = Math.min(clock.getDelta(), 0.05);
+      const dt = Math.min(clock.getDelta(), 0.04);
+      eng.frameCount++;
 
       if (inMenu) {
-        // Idle menu orbit camera
         const t = clock.getElapsedTime() * 0.15;
         camera.position.set(Math.sin(t) * 90, 45, Math.cos(t) * 90);
         camera.lookAt(0, 15, 0);
@@ -616,27 +591,24 @@ export default function App() {
         return;
       }
 
-      // Rotate Clouds & Wind Turbines
-      eng.clouds.forEach(c => {
-        c.position.x += dt * 2.2;
-        if (c.position.x > 220) c.position.x = -220;
-      });
-      eng.windTurbines.forEach(wt => {
-        if (wt.rotor) wt.rotor.rotation.z += dt * 1.8;
-      });
+      // Wind Turbines (smooth 30fps update)
+      if (eng.frameCount % 2 === 0) {
+        eng.windTurbines.forEach(wt => {
+          if (wt.rotor) wt.rotor.rotation.z += dt * 3.6;
+        });
+      }
 
-      // Update Airdrop System
+      // Airdrop System
       eng.airdropManager.update(dt, text => {
         addKillEvent({ killer: "SYSTEM", victim: text, weapon: "CARGO" });
       }, eng.lootItems);
 
-      // Update Shrinking Electric Zone
+      // Zone System
       const zData = eng.zoneSystem.update(dt, warn => {
         addKillEvent({ killer: "ZONE", victim: warn, weapon: "BLUE STORM" });
       });
       setZoneInfo(zData);
 
-      // Update Survival Time
       setSurvivalTime(prev => prev + dt);
 
       // --- 1. PARACHUTE / FLIGHT PHASE ---
@@ -646,27 +618,22 @@ export default function App() {
         eng.planeMesh.rotation.y = -Math.atan2(eng.planeDir.z, eng.planeDir.x);
         eng.playerPos.copy(eng.planePos);
 
-        // Auto-eject at boundary
-        if (Math.hypot(eng.planePos.x, eng.planePos.z) > 130) {
-          ejectFromPlane();
-        }
+        if (Math.hypot(eng.planePos.x, eng.planePos.z) > 130) ejectFromPlane();
 
-        camera.position.set(eng.planePos.x - 25, eng.planePos.y + 14, eng.planePos.z - 25);
+        camera.position.set(eng.planePos.x - 22, eng.planePos.y + 12, eng.planePos.z - 22);
         camera.lookAt(eng.planePos.x, eng.planePos.y, eng.planePos.z);
         setAltitude(eng.planePos.y);
         setAirspeed(45);
       } else if (dropState === "FREEFALL" || dropState === "GLIDING") {
         const isGlide = dropState === "GLIDING";
-        const fallSpeed = isGlide ? 7.5 : (26 + eng.pitch * 22);
+        const fallSpeed = isGlide ? 7.5 : (26 + eng.pitch * 20);
         eng.playerPos.y -= fallSpeed * dt;
 
-        // Steering forward
         const forward = new THREE.Vector3(-Math.sin(eng.yaw), 0, -Math.cos(eng.yaw));
         const right = new THREE.Vector3(Math.cos(eng.yaw), 0, -Math.sin(eng.yaw));
         const glideSpeed = isGlide ? 14 : 22;
         eng.playerPos.addScaledVector(forward, glideSpeed * dt);
 
-        // Touch steer during dive
         if (eng.touchMove && (eng.touchMove.x !== 0 || eng.touchMove.y !== 0)) {
           eng.playerPos.addScaledVector(forward, -eng.touchMove.y * glideSpeed * dt * 0.5);
           eng.playerPos.addScaledVector(right, eng.touchMove.x * glideSpeed * dt * 0.5);
@@ -676,12 +643,10 @@ export default function App() {
         setAltitude(eng.playerPos.y - groundY);
         setAirspeed(Math.hypot(glideSpeed, fallSpeed));
 
-        // Auto-deploy parachute at 45m
         if (dropState === "FREEFALL" && eng.playerPos.y <= groundY + 45) {
           deployParachute();
         }
 
-        // Landing Check
         if (eng.playerPos.y <= groundY + 0.5) {
           eng.playerPos.y = groundY;
           setDropState("GROUND");
@@ -699,21 +664,19 @@ export default function App() {
           dt
         });
 
-        // Camera follow during dive
         const camTarget = eng.playerPos.clone().add(new THREE.Vector3(0, 1.8, 0));
         const camOffset = new THREE.Vector3(
           Math.sin(eng.yaw) * 6,
-          3.5 + eng.pitch * 3,
+          3.2 + eng.pitch * 2.5,
           Math.cos(eng.yaw) * 6
         );
         camera.position.copy(camTarget).add(camOffset);
         camera.lookAt(camTarget);
       } else if (dropState === "GROUND") {
-        // --- 2. GROUND GAMEPLAY (PLAYER & VEHICLE) ---
         handleGroundMovement(eng, dt);
       }
 
-      // --- 3. BOTS UPDATE ---
+      // --- 2. BOTS UPDATE (with distance LOD) ---
       updateBots({
         bots: eng.bots,
         playerPos: eng.playerPos,
@@ -723,7 +686,6 @@ export default function App() {
           setTimeout(() => setDamageFlash(false), 200);
           sounds.playHurt();
 
-          // Vest shield absorbs damage first
           setShield(curShield => {
             if (curShield > 0) {
               const absorb = Math.min(curShield, dmg);
@@ -735,13 +697,12 @@ export default function App() {
             return 0;
           });
 
-          // Log gunshot ping on minimap
           setGunfirePings(prev => [
-            ...prev.slice(-6),
+            ...prev.slice(-4),
             { x: bx, z: bz, time: Date.now() }
           ]);
         },
-        onBotKilled: bot => {
+        onBotKilled: () => {
           setAliveCount(eng.bots.filter(b => b.alive).length + (hp > 0 ? 1 : 0));
         },
         onKillEvent: evt => addKillEvent(evt),
@@ -751,10 +712,10 @@ export default function App() {
           radius: zData.radius,
           damage: zData.damage
         },
-        obstacles: eng.obstacles,
         bullets: eng.bullets,
         scene,
-        dt
+        dt,
+        frameCount: eng.frameCount
       });
 
       // Update Bullet Tracers
@@ -768,21 +729,19 @@ export default function App() {
         }
       }
 
-      // Storm damage check on player
+      // Storm damage check
       if (dropState === "GROUND" && hp > 0) {
         const distFromCenter = Math.hypot(eng.playerPos.x - zData.x, eng.playerPos.z - zData.z);
         if (distFromCenter > zData.radius) {
           setHp(h => {
             const next = Math.max(0, h - dt * zData.damage);
-            if (next <= 0 && !gameOver) {
-              handleGameOver(false);
-            }
+            if (next <= 0 && !gameOver) handleGameOver(false);
             return next;
           });
         }
       }
 
-      // Check Match Ending Condition
+      // Win / Loss condition
       const remainingBots = eng.bots.filter(b => b.alive).length;
       if (hp <= 0 && !gameOver) {
         handleGameOver(false);
@@ -790,26 +749,21 @@ export default function App() {
         handleGameOver(true);
       }
 
-      // Sync map coordinates
       setPlayerMapPos({ x: eng.playerPos.x, z: eng.playerPos.z });
       setPlayerMapYaw(eng.yaw);
 
-      // Render Scene
       renderer.render(scene, camera);
     };
 
     function handleGroundMovement(engine, dt) {
-      // Cooldown decay
       engine.fireCooldown = Math.max(0, engine.fireCooldown - dt);
       engine.recoilKick = Math.max(0, engine.recoilKick - dt * 4);
 
-      // Auto-fire if mouse button held down for automatic rifles
       const curW = engine.inventory.weapons[engine.inventory.activeIdx];
       if (curW && curW.auto && engine.mouse.isDown && engine.fireCooldown <= 0) {
         handleShoot(engine);
       }
 
-      // Reloading Progress
       if (engine.reloadProgress > 0) {
         engine.reloadProgress += dt / (curW ? curW.reloadTime : 1.5);
         if (engine.reloadProgress >= 1) {
@@ -826,7 +780,7 @@ export default function App() {
         }
       }
 
-      // --- VEHICLE DRIVING CONTROLS ---
+      // Vehicle Driving
       if (engine.activeVehicle) {
         const veh = engine.activeVehicle;
         const touchForward = engine.touchMove ? -engine.touchMove.y : 0;
@@ -846,31 +800,27 @@ export default function App() {
         veh.mesh.position.set(veh.x, veh.y, veh.z);
         veh.mesh.rotation.y = veh.angle;
 
-        // Spin Wheels
         if (veh.mesh.userData.wheels) {
           veh.mesh.userData.wheels.forEach(w => {
             w.rotation.x += veh.speed * dt * 2;
           });
         }
 
-        // Engine Audio
         sounds.updateEngine(Math.abs(veh.speed) / veh.maxSpeed, true);
 
-        // Player sits inside
         engine.playerPos.set(veh.x, veh.y + 0.3, veh.z);
         engine.player.position.copy(engine.playerPos);
 
-        // Camera chase behind vehicle
         const camTarget = new THREE.Vector3(veh.x, veh.y + 1.8, veh.z);
         const camOffset = new THREE.Vector3(
-          Math.sin(veh.angle) * -8.5,
-          3.8,
-          Math.cos(veh.angle) * -8.5
+          Math.sin(veh.angle) * -8.2,
+          3.6,
+          Math.cos(veh.angle) * -8.2
         );
         camera.position.copy(camTarget).add(camOffset);
         camera.lookAt(camTarget);
 
-        // Roadkill check with bots
+        // Roadkill check
         engine.bots.forEach(bot => {
           if (!bot.alive) return;
           if (Math.hypot(bot.x - veh.x, bot.z - veh.z) < 2.5 && Math.abs(veh.speed) > 6) {
@@ -878,19 +828,14 @@ export default function App() {
             scene.remove(bot.mesh);
             setKills(k => k + 1);
             sounds.playHurt();
-            addKillEvent({
-              killer: "Player",
-              victim: bot.name,
-              weapon: "4x4 Buggy Roadkill",
-              isPlayer: true
-            });
+            addKillEvent({ killer: "Player", victim: bot.name, weapon: "4x4 Buggy Roadkill", isPlayer: true });
           }
         });
 
         return;
       }
 
-      // --- ON-FOOT CHARACTER MOVEMENT ---
+      // On-foot movement
       const sprint = engine.keys.ShiftLeft || engine.keys.ShiftRight || (engine.touchMove && engine.touchMove.sprint);
       setIsSprinting(sprint);
 
@@ -907,7 +852,6 @@ export default function App() {
       if (engine.keys.KeyD || engine.keys.ArrowRight) move.add(right);
       if (engine.keys.KeyA || engine.keys.ArrowLeft) move.sub(right);
 
-      // Virtual Joystick touch input
       if (engine.touchMove && (engine.touchMove.x !== 0 || engine.touchMove.y !== 0)) {
         move.addScaledVector(forward, -engine.touchMove.y);
         move.addScaledVector(right, engine.touchMove.x);
@@ -919,17 +863,14 @@ export default function App() {
         const nx = engine.playerPos.x + move.x;
         const nz = engine.playerPos.z + move.z;
 
-        // Collision against buildings & obstacles
         if (!collides(nx, engine.playerPos.z, engine.obstacles)) engine.playerPos.x = nx;
         if (!collides(engine.playerPos.x, nz, engine.obstacles)) engine.playerPos.z = nz;
 
-        // Procedural footstep audio
         if (Math.random() < (sprint ? 0.08 : 0.04)) {
           sounds.playFootstep("grass");
         }
       }
 
-      // Terrain Height Clamping & Gravity
       const terrainY = getTerrainHeight(engine.playerPos.x, engine.playerPos.z);
       if (engine.playerPos.y <= terrainY + 0.1) {
         engine.playerPos.y = terrainY;
@@ -947,11 +888,9 @@ export default function App() {
         engine.isGrounded = false;
       }
 
-      // Sync character position & orientation
       engine.player.position.copy(engine.playerPos);
       engine.player.rotation.y = engine.yaw + Math.PI;
 
-      // Update Character Model Skeletal Animation
       updateCharacterVisuals(engine.player, {
         speed: isMoving ? moveSpeed : 0,
         isSprinting: sprint,
@@ -966,10 +905,9 @@ export default function App() {
         dt
       });
 
-      // Camera Positioning: Over-the-shoulder 3rd Person
-      const shoulderX = eng.mouse.isRightDown ? 0.6 : 0.85;
-      const camDist = eng.mouse.isRightDown ? 2.5 : 5.8;
-      const camHeight = isCrouching ? 1.6 : 2.1;
+      const shoulderX = eng.mouse.isRightDown ? 0.55 : 0.8;
+      const camDist = eng.mouse.isRightDown ? 2.4 : 5.6;
+      const camHeight = isCrouching ? 1.5 : 2.0;
 
       const camTarget = engine.playerPos.clone().add(new THREE.Vector3(0, camHeight, 0));
       const rightVec = new THREE.Vector3(Math.cos(engine.yaw), 0, -Math.sin(engine.yaw));
@@ -977,29 +915,29 @@ export default function App() {
 
       const camOffset = new THREE.Vector3(
         Math.sin(engine.yaw) * Math.cos(engine.pitch) * camDist,
-        1.2 + engine.pitch * 2.8,
+        1.2 + engine.pitch * 2.6,
         Math.cos(engine.yaw) * Math.cos(engine.pitch) * camDist
       );
 
       camera.position.copy(camTarget).add(camOffset);
       camera.lookAt(camTarget);
 
-      // FOV Zoom for ADS (especially 8x for AWM sniper)
       const targetFov = eng.mouse.isRightDown ? (curW?.zoomFov || 50) : 65;
       camera.fov = THREE.MathUtils.lerp(camera.fov, targetFov, dt * 14);
       camera.updateProjectionMatrix();
 
-      // Check nearby interactables for HUD prompt
-      updateInteractionPrompt(engine);
+      // Check nearby interactables (throttled every 6 frames)
+      if (engine.frameCount % 6 === 0) {
+        updateInteractionPrompt(engine);
+      }
     }
 
     function collides(x, z, obstacles) {
-      if (Math.hypot(x, z) > 130) return true; // ocean edge
+      if (Math.hypot(x, z) > 130) return true;
       return obstacles.some(b => Math.abs(x - b.x) < b.w / 2 + 0.6 && Math.abs(z - b.z) < b.d / 2 + 0.6);
     }
 
     function updateInteractionPrompt(engine) {
-      // Vehicle check
       const v = engine.vehicles.find(
         veh => Math.hypot(veh.x - engine.playerPos.x, veh.z - engine.playerPos.z) < 4.0
       );
@@ -1008,7 +946,6 @@ export default function App() {
         return;
       }
 
-      // Loot item check
       const loot = engine.lootItems.find(
         l => l.active && Math.hypot(l.x - engine.playerPos.x, l.z - engine.playerPos.z) < 2.8
       );
@@ -1024,14 +961,9 @@ export default function App() {
     function handleGameOver(isVictory) {
       setGameOver(true);
       setWon(isVictory);
-      if (isVictory) {
-        sounds.playVictory();
-      } else {
-        sounds.playDefeat();
-      }
-      if (document.pointerLockElement) {
-        document.exitPointerLock();
-      }
+      if (isVictory) sounds.playVictory();
+      else sounds.playDefeat();
+      if (document.pointerLockElement) document.exitPointerLock();
     }
 
     animId = requestAnimationFrame(animate);
@@ -1049,7 +981,7 @@ export default function App() {
       renderer.dispose();
       mount.removeChild(renderer.domElement);
     };
-  }, [sensitivity, inMenu, paused, gameOver, dropState, ejectFromPlane, deployParachute, switchWeapon, useMed]);
+  }, [sensitivity, inMenu, paused, gameOver, dropState, ejectFromPlane, deployParachute, switchWeapon, useMed, graphicsQuality, isMobile]);
 
   // Touch Controller Callbacks
   const handleTouchMove = useCallback(({ x, y, sprint }) => {
@@ -1118,10 +1050,8 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      {/* 3D Three.js Viewport */}
       <div className="game-canvas" ref={mountRef} />
 
-      {/* MAIN MENU */}
       {inMenu && (
         <Menu
           onStartGame={startGame}
@@ -1129,10 +1059,11 @@ export default function App() {
           setSensitivity={setSensitivity}
           volume={volume}
           setVolume={setVolume}
+          graphicsQuality={graphicsQuality}
+          setGraphicsQuality={setGraphicsQuality}
         />
       )}
 
-      {/* IN-GAME HUD & SYSTEMS */}
       {!inMenu && (
         <>
           <HUD
@@ -1163,7 +1094,6 @@ export default function App() {
             onTogglePause={() => setPaused(p => !p)}
           />
 
-          {/* Minimap in Top Corner */}
           <Minimap
             playerPos={playerMapPos}
             playerYaw={playerMapYaw}
@@ -1174,7 +1104,6 @@ export default function App() {
             onOpenMap={() => setTacticalMapOpen(true)}
           />
 
-          {/* Parachute / Eject Telemetry HUD */}
           <ParachuteOverlay
             state={dropState}
             altitude={altitude}
@@ -1183,13 +1112,10 @@ export default function App() {
             onDeployParachute={deployParachute}
           />
 
-          {/* Sniper Scope Overlay (8x Reticle) */}
           <ScopeOverlay active={isAiming} weaponId={activeWeaponId} />
 
-          {/* Killfeed Ticker */}
           <KillFeed events={killEvents} />
 
-          {/* Full Screen Tactical Map [M] */}
           {tacticalMapOpen && (
             <TacticalMap
               playerPos={playerMapPos}
@@ -1201,7 +1127,6 @@ export default function App() {
             />
           )}
 
-          {/* TOUCH CONTROLS (ACTIVE ON MOBILE / TOUCH DEVICES) */}
           {isMobile && (
             <TouchControls
               onMove={handleTouchMove}
@@ -1223,7 +1148,6 @@ export default function App() {
             />
           )}
 
-          {/* Victory / Defeat Screen */}
           {gameOver && (
             <GameOverModal
               won={won}

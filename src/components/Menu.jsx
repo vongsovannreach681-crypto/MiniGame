@@ -6,9 +6,11 @@ export default function Menu({
   sensitivity,
   setSensitivity,
   volume,
-  setVolume
+  setVolume,
+  graphicsQuality,
+  setGraphicsQuality
 }) {
-  const [tab, setTab] = useState("lobby"); // "lobby", "settings", "controls"
+  const [tab, setTab] = useState("lobby");
 
   const handleStart = () => {
     sounds.init();
@@ -18,7 +20,6 @@ export default function Menu({
 
   return (
     <div className="main-menu-container">
-      {/* Background Graphic Panorama */}
       <div className="menu-backdrop">
         <div className="sun-glow" />
         <div className="mountain-silhouette back" />
@@ -27,14 +28,13 @@ export default function Menu({
       </div>
 
       <div className="menu-content-grid">
-        {/* Left Branding & Mode Card */}
         <div className="menu-sidebar">
           <div className="menu-tagline">SURVIVAL BATTLE ROYALE • WEB 3D</div>
           <h1 className="game-title">
             ISLAND <span>OPS</span>
           </h1>
           <p className="game-lead">
-            Drop into a 360-meter combat island against 29 intelligent bots.
+            Drop into a 360-meter combat island against intelligent bots.
             Scavenge weapons, drive 4x4 vehicles, contest airdrops, and survive the shrinking electric storm.
           </p>
 
@@ -77,7 +77,6 @@ export default function Menu({
           )}
         </div>
 
-        {/* Right Interactive Panel */}
         <div className="menu-right-panel">
           {tab === "lobby" && (
             <div className="briefing-box">
@@ -97,7 +96,7 @@ export default function Menu({
                 </div>
                 <div className="sector-card">
                   <b>4x4 BUGGIES</b>
-                  <p>Parked along arterial roads for rapid redeployment across the zone.</p>
+                  <p>Stationed along roads for rapid redeployment across the safe zone.</p>
                 </div>
               </div>
             </div>
@@ -105,11 +104,35 @@ export default function Menu({
 
           {tab === "settings" && (
             <div className="settings-box">
-              <h3>GAME SETTINGS</h3>
+              <h3>PERFORMANCE & SETTINGS</h3>
+
+              <div className="setting-row">
+                <label>GRAPHICS & FPS PRESET:</label>
+                <div className="graphics-preset-row">
+                  <button
+                    className={`preset-btn ${graphicsQuality === "performance" ? "active" : ""}`}
+                    onClick={() => setGraphicsQuality("performance")}
+                  >
+                    ⚡ PERFORMANCE (60+ FPS)
+                  </button>
+                  <button
+                    className={`preset-btn ${graphicsQuality === "balanced" ? "active" : ""}`}
+                    onClick={() => setGraphicsQuality("balanced")}
+                  >
+                    ⚖️ BALANCED
+                  </button>
+                  <button
+                    className={`preset-btn ${graphicsQuality === "high" ? "active" : ""}`}
+                    onClick={() => setGraphicsQuality("high")}
+                  >
+                    🌟 HIGH QUALITY
+                  </button>
+                </div>
+              </div>
 
               <div className="setting-row">
                 <label>
-                  MOUSE SENSITIVITY: <b>{sensitivity.toFixed(1)}x</b>
+                  AIM SENSITIVITY: <b>{sensitivity.toFixed(1)}x</b>
                 </label>
                 <input
                   type="range"
@@ -140,28 +163,26 @@ export default function Menu({
               </div>
 
               <div className="setting-note">
-                Audio is procedurally synthesized via Web Audio API. No external downloads required.
+                Tip: Choose "Performance" for ultra-smooth gameplay on mobile phones, tablets, or laptops.
               </div>
             </div>
           )}
 
           {tab === "controls" && (
             <div className="controls-box">
-              <h3>TACTICAL KEYBINDINGS</h3>
+              <h3>TACTICAL CONTROLS</h3>
               <div className="controls-grid">
-                <div><kbd>W A S D</kbd><span>Move & Drive</span></div>
-                <div><kbd>Mouse</kbd><span>Aim Camera</span></div>
-                <div><kbd>Left Click</kbd><span>Fire Weapon / Attack</span></div>
-                <div><kbd>Right Click</kbd><span>Aim Down Sights (ADS)</span></div>
-                <div><kbd>Shift</kbd><span>Sprint / Speed Boost</span></div>
-                <div><kbd>Space</kbd><span>Jump / Open Parachute</span></div>
-                <div><kbd>C</kbd><span>Crouch (Tighter Spread)</span></div>
-                <div><kbd>R</kbd><span>Reload Magazine</span></div>
-                <div><kbd>F</kbd><span>Interact / Loot / Drive</span></div>
-                <div><kbd>1, 2, 3</kbd><span>Switch Weapon Slots</span></div>
-                <div><kbd>H</kbd><span>Use Medkit / First Aid</span></div>
-                <div><kbd>M</kbd><span>Toggle Tactical Map</span></div>
-                <div><kbd>Esc</kbd><span>Pause / Release Mouse</span></div>
+                <div><kbd>WASD / Joystick</kbd><span>Move & Drive</span></div>
+                <div><kbd>Swipe / Mouse</kbd><span>Look & Aim</span></div>
+                <div><kbd>Left Click / 💥</kbd><span>Fire Weapon</span></div>
+                <div><kbd>Right Click / 🔍</kbd><span>Aim Down Sights (ADS)</span></div>
+                <div><kbd>Shift / Drag Up</kbd><span>Sprint</span></div>
+                <div><kbd>Space / ⬆️</kbd><span>Jump / Parachute</span></div>
+                <div><kbd>C / 🧎</kbd><span>Crouch</span></div>
+                <div><kbd>R / 🔄</kbd><span>Reload</span></div>
+                <div><kbd>F / ✋</kbd><span>Interact / Loot / Drive</span></div>
+                <div><kbd>H</kbd><span>First Aid</span></div>
+                <div><kbd>M</kbd><span>Tactical Map</span></div>
               </div>
             </div>
           )}

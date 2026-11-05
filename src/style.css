@@ -285,6 +285,30 @@ button {
   margin: 22px 0;
 }
 
+.graphics-preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+
+.preset-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #c9d8dc;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  transition: 0.15s;
+}
+
+.preset-btn.active, .preset-btn:hover {
+  background: var(--color-gold);
+  color: #101c1f;
+  border-color: var(--color-gold);
+}
+
 .setting-row label {
   display: flex;
   justify-content: space-between;
